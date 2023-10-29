@@ -1,7 +1,11 @@
 use cosmwasm_std::{
     DepsMut, Env, MessageInfo, Empty, StdResult, Response, entry_point
 };
- 
+
+pub mod msg;
+mod contract;
+mod state;
+
 #[entry_point]
 pub fn instantiate(
 	_deps: DepsMut,
