@@ -15,6 +15,10 @@ pub enum ExecuteMsg {
         token_id: String,
         token_address: String,
     },
+    Claim {
+        token_id: String,
+        token_address: String,
+    },
 }
 
 #[cw_serde]

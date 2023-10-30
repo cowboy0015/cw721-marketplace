@@ -2,6 +2,8 @@ pub mod msg;
 mod contract;
 mod error;
 mod state;
+#[cfg(test)]
+pub mod mock;
 
 use cosmwasm_std::{
     Deps, DepsMut, Env, MessageInfo, Response, entry_point, Uint128
@@ -27,7 +29,7 @@ pub fn instantiate(
 
 #[entry_point]
 pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> Result<Response, ContractError> {
-	use contract::{exec_handle_receive_cw721, exec_place_bid, exec_cancel};
+	use contract::{exec_handle_receive_cw721, exec_place_bid, exec_cancel, exec_claim};
     use msg::ExecuteMsg;
 	match msg {
 		ExecuteMsg::ReceiveNft(msg) => exec_handle_receive_cw721(deps, env, info, msg),
@@ -39,6 +41,10 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> R
             token_id,
             token_address,
         } => exec_cancel(deps, env, info, token_id, token_address),
+        ExecuteMsg::Claim {
+            token_id,
+            token_address,
+        } => exec_claim(deps, env, info, token_id, token_address),
 	}
 }
 
@@ -56,12 +62,11 @@ mod tests {
     use crate::{
         ExecuteMsg, execute, msg::Cw721CustomMsg, InstantiateMsg, instantiate,
         state::{AuctionInfo, TOKEN_AUCTION_STATE, TokenAuctionState, auction_infos},
-        error::ContractError
+        error::ContractError,
+        mock::{custom_mock_dependencies, DUMMY_TOKEN_ADDR, DUMMY_TOKEN_OWNER, DUMMY_UNCLAIMED_TOKEN},
     };
+
     use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Expiration};
-    pub const DUMMY_TOKEN_ADDR: &str = "dummy_token_addr";
-    pub const DUMMY_TOKEN_OWNER: &str = "dummy_token_owner";
-    pub const DUMMY_UNCLAIMED_TOKEN: &str = "dummy_unclaimed_token";
 
     fn check_auction_created(deps: Deps, min_bid: Option<Uint128>) {
         assert_eq!(
@@ -660,4 +665,165 @@ mod tests {
         assert_eq!(ContractError::AuctionEnded {}, res.unwrap_err());
     }
 
+    #[test]
+    fn test_exec_claim_no_bids() {
+        let mut deps = custom_mock_dependencies(&[]);
+        let mut env = mock_env();
+        let info = mock_info("owner", &[]);
+        let msg = InstantiateMsg {};
+        let _res = instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        start_auction(deps.as_mut(), None);
+
+        env.block.time = Timestamp::from_seconds(250);
+
+        let msg = ExecuteMsg::Claim {
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        let info = mock_info("any_user", &[]);
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+        assert_eq!(
+            Response::new()
+                .add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: DUMMY_TOKEN_ADDR.to_owned(),
+                    msg: to_binary(&Cw721ExecuteMsg::TransferNft {
+                        recipient: DUMMY_TOKEN_OWNER.to_owned(),
+                        token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+                    })
+                    .unwrap(),
+                    funds: vec![],
+                }))
+                .add_attribute("action", "claim")
+                .add_attribute("token_id", DUMMY_UNCLAIMED_TOKEN)
+                .add_attribute("token_contract", DUMMY_TOKEN_ADDR)
+                .add_attribute("recipient", DUMMY_TOKEN_OWNER)
+                .add_attribute("winning_bid_amount", Uint128::zero())
+                .add_attribute("auction_id", "1"),
+            res
+        );
+    }
+
+    #[test]
+    fn test_exec_claim() {
+        let mut deps = custom_mock_dependencies(&[]);
+        let mut env = mock_env();
+        let info = mock_info("owner", &[]);
+        let msg = InstantiateMsg {};
+        let _res = instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        start_auction(deps.as_mut(), None);
+
+        let msg = ExecuteMsg::PlaceBid {
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        env.block.time = Timestamp::from_seconds(150);
+
+        let info = mock_info("sender", &coins(100, "usd".to_string()));
+        let _res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        env.block.time = Timestamp::from_seconds(250);
+
+        let msg = ExecuteMsg::Claim {
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        let info = mock_info("any_user", &[]);
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+        let transfer_nft_msg = Cw721ExecuteMsg::TransferNft {
+            recipient: "sender".to_string(),
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+        };
+        assert_eq!(
+            Response::new()
+                .add_message(CosmosMsg::Bank(BankMsg::Send {
+                    to_address: DUMMY_TOKEN_OWNER.to_owned(),
+                    amount: coins(100, "usd"),
+                }))
+                .add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+                    contract_addr: DUMMY_TOKEN_ADDR.to_string(),
+                    msg: to_binary(&transfer_nft_msg).unwrap(),
+                    funds: vec![],
+                }))
+                .add_attribute("action", "claim")
+                .add_attribute("token_id", DUMMY_UNCLAIMED_TOKEN)
+                .add_attribute("token_contract", DUMMY_TOKEN_ADDR)
+                .add_attribute("recipient", "sender")
+                .add_attribute("winning_bid_amount", Uint128::from(100u128))
+                .add_attribute("auction_id", "1"),
+            res
+        );
+    }
+
+    #[test]
+    fn test_exec_claim_auction_not_ended() {
+        let mut deps = custom_mock_dependencies(&[]);
+        let mut env = mock_env();
+        let info = mock_info("owner", &[]);
+        let msg = InstantiateMsg {};
+        let _res = instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        start_auction(deps.as_mut(), None);
+
+        let msg = ExecuteMsg::PlaceBid {
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        env.block.time = Timestamp::from_seconds(150);
+
+        let info = mock_info("sender", &coins(100, "usd".to_string()));
+        let _res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        let msg = ExecuteMsg::Claim {
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        let info = mock_info("any_user", &[]);
+        let res = execute(deps.as_mut(), env, info, msg);
+        assert_eq!(ContractError::AuctionNotEnded {}, res.unwrap_err());
+    }
+
+    #[test]
+    fn test_exec_claim_auction_already_claimed() {
+        let mut deps = custom_mock_dependencies(&[]);
+        let env = mock_env();
+        let info = mock_info("owner", &[]);
+        let msg = InstantiateMsg {};
+        let _res = instantiate(deps.as_mut(), env, info, msg).unwrap();
+
+        let hook_msg = Cw721CustomMsg::StartAuction {
+            start_time: 100000,
+            duration: 100000,
+            coin_denom: "usd".to_string(),
+            min_bid: None,
+        };
+        let msg = ExecuteMsg::ReceiveNft(Cw721ReceiveMsg {
+            sender: DUMMY_TOKEN_OWNER.to_owned(),
+            token_id: "claimed_token".to_string(),
+            msg: to_binary(&hook_msg).unwrap(),
+        });
+        let mut env = mock_env();
+        env.block.time = Timestamp::from_seconds(0u64);
+
+        let info = mock_info(DUMMY_TOKEN_ADDR, &[]);
+        let _res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Auction is over.
+        env.block.time = Timestamp::from_seconds(300);
+
+        let msg = ExecuteMsg::Claim {
+            token_id: "claimed_token".to_string(),
+            token_address: DUMMY_TOKEN_ADDR.to_string(),
+        };
+
+        let info = mock_info("any_user", &[]);
+        let res = execute(deps.as_mut(), env, info, msg);
+        assert_eq!(ContractError::AuctionAlreadyClaimed {}, res.unwrap_err());
+    }
 }

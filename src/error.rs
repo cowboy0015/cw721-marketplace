@@ -44,6 +44,12 @@ pub enum ContractError {
 
     #[error("Unauthorized")]
     Unauthorized {},
+
+    #[error("AuctionNotEnded")]
+    AuctionNotEnded {},
+    
+    #[error("AuctionRewardAlreadyClaimed")]
+    AuctionAlreadyClaimed {},
 }
 
 impl From<OverflowError> for ContractError {

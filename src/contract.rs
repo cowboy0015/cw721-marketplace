@@ -1,10 +1,10 @@
-use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage, Timestamp, Uint128, WasmMsg};
+use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, QuerierWrapper, QueryRequest, Response, Storage, Timestamp, Uint128, WasmMsg, WasmQuery};
 use crate::{
     msg::{Cw721CustomMsg},
     state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, TokenAuctionState, Bid, auction_infos},
     error::{ContractError},
 };
-use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Expiration};
+use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Cw721QueryMsg, OwnerOfResponse, Expiration};
 
 
 
@@ -235,6 +235,73 @@ pub fn exec_cancel(
     Ok(Response::new().add_messages(messages))
 }
 
+pub fn exec_claim(
+    deps: DepsMut,
+    env: Env,
+    _info: MessageInfo,
+    token_id: String,
+    token_address: String,
+) -> Result<Response, ContractError> {
+    let token_auction_state = get_token_auction_state(deps.storage, &token_id, &token_address)?;
+    ensure!(
+        token_auction_state.end_time.is_expired(&env.block),
+        ContractError::AuctionNotEnded {}
+    );
+    let token_owner = owner_of_token(
+        deps.querier,
+        token_auction_state.token_address.clone(),
+        token_id.clone(),
+    )?.owner;
+    ensure!(
+        token_owner == env.contract.address,
+        ContractError::AuctionAlreadyClaimed {}
+    );
+
+    if token_auction_state.high_bidder_addr.to_string().is_empty() || token_auction_state.high_bidder_amount.is_zero() {
+        return Ok(Response::new()
+            .add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: token_auction_state.token_address.clone(),
+                msg: to_binary(&Cw721ExecuteMsg::TransferNft {
+                    recipient: token_auction_state.owner.clone(),
+                    token_id: token_id.clone(),
+                })?,
+                funds: vec![],
+            }))
+            .add_attribute("action", "claim")
+            .add_attribute("token_id", token_id)
+            .add_attribute("token_contract", token_auction_state.token_address)
+            .add_attribute("recipient", token_auction_state.owner)
+            .add_attribute("winning_bid_amount", token_auction_state.high_bidder_amount)
+            .add_attribute("auction_id", token_auction_state.auction_id));
+    }
+
+    
+    Ok(Response::new()
+        // Send funds to the original owner.
+        .add_message(CosmosMsg::Bank(BankMsg::Send {
+            to_address: token_auction_state.owner,
+            amount: coins(
+                token_auction_state.high_bidder_amount.u128(),
+                token_auction_state.coin_denom.clone(),
+            ),
+        }))
+        // Send NFT to auction winner.
+        .add_message(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: token_auction_state.token_address.clone(),
+            msg: to_binary(&Cw721ExecuteMsg::TransferNft {
+                recipient: token_auction_state.high_bidder_addr.to_string(),
+                token_id: token_id.clone(),
+            })?,
+            funds: vec![],
+        }))
+        .add_attribute("action", "claim")
+        .add_attribute("token_id", token_id)
+        .add_attribute("token_contract", token_auction_state.token_address)
+        .add_attribute("recipient", &token_auction_state.high_bidder_addr)
+        .add_attribute("winning_bid_amount", token_auction_state.high_bidder_amount)
+        .add_attribute("auction_id", token_auction_state.auction_id))
+}
+
 fn get_and_increment_next_auction_id(
     storage: &mut dyn Storage,
 ) -> Result<Uint128, ContractError> {
@@ -279,4 +346,20 @@ fn get_token_auction_state(
         TOKEN_AUCTION_STATE.load(storage, latest_auction_id.u128())?;
 
     Ok(token_auction_state)
+}
+
+fn owner_of_token(
+    querier: QuerierWrapper,
+    token_addr: String,
+    token_id: String,
+) -> Result<OwnerOfResponse, ContractError> {
+    let res: OwnerOfResponse = querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+        contract_addr: token_addr,
+        msg: to_binary(&Cw721QueryMsg::OwnerOf {
+            token_id,
+            include_expired: None,
+        })?,
+    }))?;
+
+    Ok(res)
 }
