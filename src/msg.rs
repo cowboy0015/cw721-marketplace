@@ -11,6 +11,10 @@ pub enum ExecuteMsg {
         token_id: String,
         token_address: String,
     },
+    CancelAuction {
+        token_id: String,
+        token_address: String,
+    },
 }
 
 #[cw_serde]

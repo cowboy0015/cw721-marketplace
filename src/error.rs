@@ -41,6 +41,9 @@ pub enum ContractError {
 
     #[error("BidSmallerThanHighestBid")]
     BidSmallerThanHighestBid {},
+
+    #[error("Unauthorized")]
+    Unauthorized {},
 }
 
 impl From<OverflowError> for ContractError {

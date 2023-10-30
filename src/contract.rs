@@ -1,10 +1,10 @@
-use cosmwasm_std::{from_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage, Timestamp, Uint128};
+use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage, Timestamp, Uint128, WasmMsg};
 use crate::{
     msg::{Cw721CustomMsg},
     state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, TokenAuctionState, Bid, auction_infos},
     error::{ContractError},
 };
-use cw721::{Cw721ReceiveMsg, Expiration};
+use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Expiration};
 
 
 
@@ -187,6 +187,52 @@ pub fn exec_place_bid(
         attr("bider", info.sender.to_string()),
         attr("amount", payment.amount.to_string()),
     ]))
+}
+
+pub fn exec_cancel(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    token_id: String,
+    token_address: String,
+) -> Result<Response, ContractError> {
+    let mut token_auction_state = get_token_auction_state(deps.storage, &token_id, &token_address)?;
+    ensure!(
+        info.sender == token_auction_state.owner,
+        ContractError::Unauthorized {}
+    );
+    ensure!(
+        !token_auction_state.end_time.is_expired(&env.block),
+        ContractError::AuctionEnded {}
+    );
+    let mut messages: Vec<CosmosMsg> = vec![CosmosMsg::Wasm(WasmMsg::Execute {
+        contract_addr: token_auction_state.token_address.clone(),
+        msg: to_binary(&Cw721ExecuteMsg::TransferNft {
+            recipient: info.sender.to_string(),
+            token_id,
+        })?,
+        funds: vec![],
+    })];
+
+    // Refund highest bid, if it exists.
+    if !token_auction_state.high_bidder_amount.is_zero() {
+        messages.push(CosmosMsg::Bank(BankMsg::Send {
+            to_address: token_auction_state.high_bidder_addr.to_string(),
+            amount: coins(
+                token_auction_state.high_bidder_amount.u128(),
+                token_auction_state.coin_denom.clone(),
+            ),
+        }));
+    }
+
+    token_auction_state.is_cancelled = true;
+    TOKEN_AUCTION_STATE.save(
+        deps.storage,
+        token_auction_state.auction_id.u128(),
+        &token_auction_state,
+    )?;
+
+    Ok(Response::new().add_messages(messages))
 }
 
 fn get_and_increment_next_auction_id(
