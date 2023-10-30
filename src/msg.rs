@@ -1,6 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Uint128};
-use crate::state::AuctionInfo;
+use crate::state::{AuctionInfo, OrderBy, TokenAuctionState, Bid};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
@@ -30,6 +30,15 @@ pub enum QueryMsg {
         token_address: Option<String>,
         start_after: Option<String>,
         limit: Option<u64>,
+    },
+    #[returns(TokenAuctionState)]
+    AuctionState { auction_id: Uint128 },
+    #[returns(Vec<Bid>)]
+    Bids {
+        auction_id: Uint128,
+        start_after: Option<u64>,
+        limit: Option<u64>,
+        order_by: Option<OrderBy>,
     },
 }
 

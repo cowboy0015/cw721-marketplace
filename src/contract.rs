@@ -1,7 +1,7 @@
 use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, QueryRequest, Response, Storage, Timestamp, Uint128, WasmMsg, WasmQuery};
 use crate::{
     msg::{Cw721CustomMsg},
-    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, AuctionInfo, Bid, TokenAuctionState, auction_infos, read_auction_infos},
+    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, AuctionInfo, Bid, OrderBy, TokenAuctionState, auction_infos, read_auction_infos, read_bids},
     error::{ContractError},
 };
 use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Cw721QueryMsg, OwnerOfResponse, Expiration};
@@ -309,6 +309,32 @@ pub fn query_auction_infos(
     limit: Option<u64>,
 ) -> Result<Vec<AuctionInfo>, ContractError> {
     read_auction_infos(deps.storage, token_address, start_after, limit)
+}
+
+
+pub fn query_bids(
+    deps: Deps,
+    auction_id: Uint128,
+    start_after: Option<u64>,
+    limit: Option<u64>,
+    order_by: Option<OrderBy>,
+) -> Result<Vec<Bid>, ContractError> {
+    let bids = read_bids(
+        deps.storage,
+        auction_id.u128(),
+        start_after,
+        limit,
+        order_by,
+    )?;
+    Ok(bids)
+}
+
+pub fn query_auction_state(
+    deps: Deps,
+    auction_id: Uint128,
+) -> Result<TokenAuctionState, ContractError> {
+    let token_auction_state = TOKEN_AUCTION_STATE.load(deps.storage, auction_id.u128())?;
+    Ok(token_auction_state)
 }
 
 // ============================== helper functions ==============================//

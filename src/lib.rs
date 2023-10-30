@@ -50,17 +50,23 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> R
 
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> Result<Binary, ContractError> {
-	use contract::{query_auction_infos};
+	use contract::{query_auction_infos, query_bids, query_auction_state};
     use msg::QueryMsg;
     match msg {
         QueryMsg::AuctionInfos {
             token_address,
             start_after,
             limit,
-        } => {
-            let data = query_auction_infos(deps, token_address, start_after, limit)?;
-            to_binary(&data).map_err(|err| err.into())
-        },
+        } => to_binary(&query_auction_infos(deps, token_address, start_after, limit)?).map_err(|err| err.into()),
+        QueryMsg::Bids {
+            auction_id,
+            start_after,
+            limit,
+            order_by,
+        } => to_binary(&query_bids(deps, auction_id, start_after, limit, order_by)?).map_err(|err| err.into()),
+        QueryMsg::AuctionState {
+            auction_id
+        } => to_binary(&query_auction_state(deps, auction_id)?).map_err(|err| err.into())
     }
 }
 
@@ -861,5 +867,4 @@ mod tests {
             res
         );
     }
-
 }
