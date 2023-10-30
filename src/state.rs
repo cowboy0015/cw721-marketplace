@@ -1,12 +1,13 @@
-use cosmwasm_std::{Addr, StdResult, Storage, Uint128, Timestamp};
+use cosmwasm_std::{Addr, Order, StdResult, Storage, Timestamp, Uint128};
 use cw721::Expiration;
-use cw_storage_plus::{Item, Map, IndexedMap, MultiIndex, Index, IndexList};
+use cw_storage_plus::{Bound, Item, Map, IndexedMap, MultiIndex, Index, IndexList};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 use cosmwasm_schema::cw_serde;
+use crate::ContractError;
 
-const MAX_LIMIT: u64 = 30;
+const MAX_LIMIT: u64 = 50;
 const DEFAULT_LIMIT: u64 = 10;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -122,6 +123,36 @@ pub fn read_bids(
     Ok(slice.to_vec())
 }
 
+pub fn read_auction_infos(
+    storage: &dyn Storage,
+    token_address: Option<String>,
+    start_after: Option<String>,
+    limit: Option<u64>,
+) -> Result<Vec<AuctionInfo>, ContractError> {
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let start = start_after.map(Bound::exclusive);
+
+    let keys: Vec<String> = match token_address{
+        Some(val) => auction_infos()
+            .idx
+            .token
+            .prefix(val)
+            .keys(storage, start, None, Order::Ascending)
+            .take(limit)
+            .collect::<Result<Vec<String>, _>>()?,
+        None => auction_infos()
+            .idx
+            .token
+            .keys(storage, None, None, Order::Ascending)
+            .take(limit)
+            .collect::<Result<Vec<String>, _>>()?,
+    };
+    let mut res: Vec<AuctionInfo> = vec![];
+    for key in keys.iter() {
+        res.push(auction_infos().load(storage, key)?);
+    }
+    Ok(res)
+}
 
 #[cfg(test)]
 mod tests {

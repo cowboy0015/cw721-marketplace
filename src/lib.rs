@@ -6,14 +6,14 @@ mod state;
 pub mod mock;
 
 use cosmwasm_std::{
-    Deps, DepsMut, Env, MessageInfo, Response, entry_point, Uint128
+    Deps, DepsMut, Env, MessageInfo, Response, Uint128, entry_point, to_binary, Binary,
 };
 
 use {
 	msg::InstantiateMsg,
 	error::ContractError,
 	state::NEXT_AUCTION_ID,
-	msg::{ExecuteMsg}
+	msg::{ExecuteMsg, QueryMsg}
 };
 
 #[entry_point]
@@ -49,18 +49,29 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> R
 }
 
 #[entry_point]
-pub fn query(_deps: Deps, _env: Env, _msg: msg::QueryMsg) -> Result<Response, ContractError> {
-    Ok(Response::new())
+pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> Result<Binary, ContractError> {
+	use contract::{query_auction_infos};
+    use msg::QueryMsg;
+    match msg {
+        QueryMsg::AuctionInfos {
+            token_address,
+            start_after,
+            limit,
+        } => {
+            let data = query_auction_infos(deps, token_address, start_after, limit)?;
+            to_binary(&data).map_err(|err| err.into())
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use cosmwasm_std::{
-        Addr, BankMsg, CosmosMsg, Deps, DepsMut, Response, Timestamp, Uint128, WasmMsg, attr, coins, coin, to_binary,
+        Addr, BankMsg, CosmosMsg, Deps, DepsMut, Response, Timestamp, Uint128, WasmMsg, attr, coins, coin, to_binary, from_binary,
         testing::{mock_info, mock_env, mock_dependencies},
     };
     use crate::{
-        ExecuteMsg, execute, msg::Cw721CustomMsg, InstantiateMsg, instantiate,
+        ExecuteMsg, execute, query, msg::Cw721CustomMsg, InstantiateMsg, instantiate, QueryMsg,
         state::{AuctionInfo, TOKEN_AUCTION_STATE, TokenAuctionState, auction_infos},
         error::ContractError,
         mock::{custom_mock_dependencies, DUMMY_TOKEN_ADDR, DUMMY_TOKEN_OWNER, DUMMY_UNCLAIMED_TOKEN},
@@ -107,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exe_start_auction() {
+    fn test_exec_start_auction() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         let info = mock_info("owner", &[]);
@@ -144,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exe_place_bid() {
+    fn test_exec_place_bid() {
         let mut deps = mock_dependencies();
         let mut env = mock_env();
         let info = mock_info("owner", &[]);
@@ -187,67 +198,6 @@ mod tests {
                 )
                 .unwrap()
         );
-
-        // // let mut expected_response = AuctionStateResponse {
-        // //     start_time: Expiration::AtTime(Timestamp::from_seconds(100)),
-        // //     end_time: Expiration::AtTime(Timestamp::from_seconds(200)),
-        // //     high_bidder_addr: "sender".to_string(),
-        // //     high_bidder_amount: Uint128::from(100u128),
-        // //     auction_id: Uint128::from(1u128),
-        // //     coin_denom: "usd".to_string(),
-        // //     is_cancelled: false,
-        // //     min_bid: None,
-        // // };
-
-        // // let res = query_latest_auction_state_helper(deps.as_ref(), env.clone());
-        // // assert_eq!(expected_response, res);
-
-        // env.block.time = Timestamp::from_seconds(160);
-        // let info = mock_info("other", &coins(200, "usd".to_string()));
-        // let res = execute(deps.as_mut(), env.clone(), info.clone(), msg.clone()).unwrap();
-        // assert_eq!(
-        //     Response::new()
-        //         .add_message(CosmosMsg::Bank(BankMsg::Send {
-        //             to_address: "sender".to_string(),
-        //             amount: coins(100, "usd")
-        //         }))
-        //         .add_attributes(vec![
-        //             attr("action", "bid"),
-        //             attr("token_id", DUMMY_UNCLAIMED_TOKEN),
-        //             attr("bider", info.sender),
-        //             attr("amount", "200"),
-        //         ]),
-        //     res
-        // );
-
-        // // expected_response.high_bidder_addr = "other".to_string();
-        // // expected_response.high_bidder_amount = Uint128::from(200u128);
-        // // let res = query_latest_auction_state_helper(deps.as_ref(), env.clone());
-        // // assert_eq!(expected_response, res);
-
-        // env.block.time = Timestamp::from_seconds(170);
-        // let info = mock_info("sender", &coins(250, "usd".to_string()));
-        // let res = execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
-
-        // assert_eq!(
-        //     Response::new()
-        //         .add_message(CosmosMsg::Bank(BankMsg::Send {
-        //             to_address: "other".to_string(),
-        //             amount: coins(200, "usd")
-        //         }))
-        //         .add_attributes(vec![
-        //             attr("action", "bid"),
-        //             attr("token_id", DUMMY_UNCLAIMED_TOKEN),
-        //             attr("bider", info.sender),
-        //             attr("amount", "250"),
-        //         ]),
-        //     res
-        // );
-
-        // // expected_response.high_bidder_addr = "sender".to_string();
-        // // expected_response.high_bidder_amount = Uint128::from(250u128);
-        // // let res = query_latest_auction_state_helper(deps.as_ref(), env);
-        // // assert_eq!(expected_response, res);
     }
 
     #[test]
@@ -622,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn test_exe_cancel_not_token_owner() {
+    fn test_exec_cancel_not_token_owner() {
         let mut deps = mock_dependencies();
         let mut env = mock_env();
         let info = mock_info("owner", &[]);
@@ -826,4 +776,90 @@ mod tests {
         let res = execute(deps.as_mut(), env, info, msg);
         assert_eq!(ContractError::AuctionAlreadyClaimed {}, res.unwrap_err());
     }
+
+    #[test]
+    fn test_query_start_auction() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let info = mock_info("owner", &[]);
+        let _res = instantiate(deps.as_mut(), env, info, InstantiateMsg {}).unwrap();
+
+        let custom_msg = Cw721CustomMsg::StartAuction {
+            start_time: 100000,
+            duration: 100000,
+            coin_denom: "usd".to_string(),
+            min_bid: None,
+        };
+        let msg = ExecuteMsg::ReceiveNft(Cw721ReceiveMsg {
+            sender: DUMMY_TOKEN_OWNER.to_owned(),
+            token_id: DUMMY_UNCLAIMED_TOKEN.to_owned(),
+            msg: to_binary(&custom_msg).unwrap(),
+        });
+        let mut env = mock_env();
+        env.block.time = Timestamp::from_seconds(0u64);
+
+        let info = mock_info(DUMMY_TOKEN_ADDR, &[]);
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+
+        let msg = ExecuteMsg::ReceiveNft(Cw721ReceiveMsg {
+            sender: "foo_token_owner".to_owned(),
+            token_id: "foo_token".to_owned(),
+            msg: to_binary(&custom_msg).unwrap(),
+        });
+
+        let info = mock_info(DUMMY_TOKEN_ADDR, &[]);
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        check_auction_created(deps.as_ref(), None);
+
+        let query_msg = QueryMsg::AuctionInfos {
+            token_address: Some(DUMMY_TOKEN_ADDR.to_string()),
+            start_after: Some("e".to_string()),
+            limit: Some(10),
+        };
+        let res:Vec<AuctionInfo> = from_binary(&query(deps.as_ref(), env.clone(), query_msg).unwrap()).unwrap();
+        assert_eq!(
+            vec! [ AuctionInfo {
+                    auction_ids: vec![Uint128::from(2u128)],
+                    token_address: DUMMY_TOKEN_ADDR.to_string(),
+                    token_id: "foo_token".to_string(),
+                }
+            ],
+            res
+        );
+
+        
+        let query_msg = QueryMsg::AuctionInfos {
+            token_address: Some(DUMMY_TOKEN_ADDR.to_string()),
+            start_after: Some("g".to_string()),
+            limit: Some(10),
+        };
+        let res:Vec<AuctionInfo> = from_binary(&query(deps.as_ref(), env.clone(), query_msg).unwrap()).unwrap();
+        assert_eq!(
+            Vec::<AuctionInfo>::new(),
+            res
+        );
+
+        let query_msg = QueryMsg::AuctionInfos {
+            token_address: None,
+            start_after: None,
+            limit: Some(10),
+        };
+        let res:Vec<AuctionInfo> = from_binary(&query(deps.as_ref(), env, query_msg).unwrap()).unwrap();
+        assert_eq!(
+            vec! [ AuctionInfo {
+                    auction_ids: vec![Uint128::from(1u128)],
+                    token_address: DUMMY_TOKEN_ADDR.to_string(),
+                    token_id: DUMMY_UNCLAIMED_TOKEN.to_string(),
+                }, AuctionInfo {
+                    auction_ids: vec![Uint128::from(2u128)],
+                    token_address: "dummy_token_addr".to_string(),
+                    token_id: "foo_token".to_string(),
+                }
+            ],
+            res
+        );
+    }
+
 }

@@ -1,13 +1,12 @@
-use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, QuerierWrapper, QueryRequest, Response, Storage, Timestamp, Uint128, WasmMsg, WasmQuery};
+use cosmwasm_std::{from_binary, to_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo, QuerierWrapper, QueryRequest, Response, Storage, Timestamp, Uint128, WasmMsg, WasmQuery};
 use crate::{
     msg::{Cw721CustomMsg},
-    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, TokenAuctionState, Bid, auction_infos},
+    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, AuctionInfo, Bid, TokenAuctionState, auction_infos, read_auction_infos},
     error::{ContractError},
 };
 use cw721::{Cw721ReceiveMsg, Cw721ExecuteMsg, Cw721QueryMsg, OwnerOfResponse, Expiration};
 
-
-
+// ============================== execute handlers ==============================//
 pub fn exec_handle_receive_cw721(
     deps: DepsMut,
     env: Env,
@@ -302,6 +301,17 @@ pub fn exec_claim(
         .add_attribute("auction_id", token_auction_state.auction_id))
 }
 
+// ============================== query handlers ==============================//
+pub fn query_auction_infos(
+    deps: Deps,
+    token_address: Option<String>,
+    start_after: Option<String>,
+    limit: Option<u64>,
+) -> Result<Vec<AuctionInfo>, ContractError> {
+    read_auction_infos(deps.storage, token_address, start_after, limit)
+}
+
+// ============================== helper functions ==============================//
 fn get_and_increment_next_auction_id(
     storage: &mut dyn Storage,
 ) -> Result<Uint128, ContractError> {
