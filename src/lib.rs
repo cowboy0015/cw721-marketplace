@@ -22,15 +22,14 @@ pub fn instantiate(
     _env: Env,
     _info: MessageInfo,
     _msg: InstantiateMsg,
-) -> Result<(), ContractError> {
+) -> Result<Response, ContractError> {
     NEXT_AUCTION_ID.save(deps.storage, &Uint128::from(1u128))?;
-	Ok(())
+	Ok(Response::new())
 }
 
 #[entry_point]
 pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> Result<Response, ContractError> {
 	use contract::{exec_handle_receive_cw721, exec_place_bid, exec_cancel, exec_claim};
-    use msg::ExecuteMsg;
 	match msg {
 		ExecuteMsg::ReceiveNft(msg) => exec_handle_receive_cw721(deps, env, info, msg),
         ExecuteMsg::PlaceBid {
@@ -51,7 +50,6 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> R
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> Result<Binary, ContractError> {
 	use contract::{query_auction_infos, query_bids, query_auction_state};
-    use msg::QueryMsg;
     match msg {
         QueryMsg::AuctionInfos {
             token_address,

@@ -1,6 +1,6 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Uint128};
-use crate::state::{AuctionInfo, OrderBy, TokenAuctionState, Bid};
+use crate::state::{OrderBy, AuctionInfo, TokenAuctionState, Bid};
 
 #[cw_serde]
 pub struct InstantiateMsg {}
