@@ -1,6 +1,6 @@
 use cosmwasm_std::{Addr, StdResult, Storage, Uint128, Timestamp};
 use cw721::Expiration;
-use cw_storage_plus::{Item, Map};
+use cw_storage_plus::{Item, Map, IndexedMap, MultiIndex, Index, IndexList};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -42,6 +42,46 @@ pub enum OrderBy {
     Asc,
     Desc,
 }
+
+#[cw_serde]
+#[derive(Default)]
+pub struct AuctionInfo {
+    pub auction_ids: Vec<Uint128>,
+    pub token_address: String,
+    pub token_id: String,
+}
+
+impl AuctionInfo {
+    pub fn latest(&self) -> Option<&Uint128> {
+        self.auction_ids.last()
+    }
+
+    pub fn push(&mut self, e: Uint128) {
+        self.auction_ids.push(e)
+    }
+}
+impl<'a> IndexList<AuctionInfo> for AuctionIdIndices<'a> {
+    fn get_indexes(&'_ self) -> Box<dyn Iterator<Item = &'_ dyn Index<AuctionInfo>> + '_> {
+        let v: Vec<&dyn Index<AuctionInfo>> = vec![&self.token];
+        Box::new(v.into_iter())
+    }
+}
+
+pub struct AuctionIdIndices<'a> {
+    pub token: MultiIndex<'a, String, AuctionInfo, String>,
+}
+
+pub fn auction_infos<'a>() -> IndexedMap<'a, &'a str, AuctionInfo, AuctionIdIndices<'a>> {
+    let indexes = AuctionIdIndices {
+        token: MultiIndex::new(
+            |_pk: &[u8], r| r.token_address.clone(),
+            "ownership",
+            "token_index",
+        ),
+    };
+    IndexedMap::new("ownership", indexes)
+}
+
 
 pub fn read_bids(
     storage: &dyn Storage,

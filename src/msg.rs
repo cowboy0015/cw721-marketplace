@@ -6,7 +6,11 @@ pub struct InstantiateMsg {}
 
 #[cw_serde]
 pub enum ExecuteMsg {
-    ReceiveNft(cw721::Cw721ReceiveMsg)
+    ReceiveNft(cw721::Cw721ReceiveMsg),
+    PlaceBid {
+        token_id: String,
+        token_address: String,
+    },
 }
 
 #[cw_serde]

@@ -17,6 +17,30 @@ pub enum ContractError {
 
     #[error("Overflow")]
     Overflow {},
+
+    #[error("AuctionDoesNotExist")]
+    AuctionDoesNotExist {},
+    
+    #[error("AuctionCancelled")]
+    AuctionCancelled {},
+
+    #[error("AuctionNotStarted")]
+    AuctionNotStarted {},
+
+    #[error("AuctionEnded")]
+    AuctionEnded {},
+
+    #[error("TokenOwnerCannotBid")]
+    TokenOwnerCannotBid {},
+
+    #[error("InvalidFunds: {msg}")]
+    InvalidFunds { msg: String },
+
+    #[error("HighestBidderCannotOutBid")]
+    HighestBidderCannotOutBid {},
+
+    #[error("BidSmallerThanHighestBid")]
+    BidSmallerThanHighestBid {},
 }
 
 impl From<OverflowError> for ContractError {

@@ -1,7 +1,7 @@
-use cosmwasm_std::{from_binary, attr, ensure, Uint128, DepsMut, Env, MessageInfo, Storage, Response, BlockInfo, Timestamp, Addr};
+use cosmwasm_std::{from_binary, attr, ensure, coins, Addr, BankMsg, BlockInfo, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Storage, Timestamp, Uint128};
 use crate::{
     msg::{Cw721CustomMsg},
-    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, TokenAuctionState},
+    state::{BIDS, TOKEN_AUCTION_STATE, NEXT_AUCTION_ID, TokenAuctionState, Bid, auction_infos},
     error::{ContractError},
 };
 use cw721::{Cw721ReceiveMsg, Expiration};
@@ -64,6 +64,16 @@ fn exec_start_auction(
     );
 
     let auction_id = get_and_increment_next_auction_id(deps.storage)?;
+    let pk = token_id.to_owned() + &token_address;
+
+    let mut auction_info = auction_infos().load(deps.storage, &pk).unwrap_or_default();
+    auction_info.push(auction_id);
+    if auction_info.token_address.is_empty() {
+        auction_info.token_address = token_address.to_owned();
+        auction_info.token_id = token_id.to_owned();
+    }
+    auction_infos().save(deps.storage, &pk, &auction_info)?;
+    
     BIDS.save(deps.storage, auction_id.u128(), &vec![])?;
 
 
@@ -93,10 +103,97 @@ fn exec_start_auction(
     ]))
 }
 
+pub fn exec_place_bid(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    token_id: String,
+    token_address: String,
+) -> Result<Response, ContractError> {
+    let mut token_auction_state = get_token_auction_state(deps.storage, &token_id, &token_address)?;
+
+    ensure!(
+        !token_auction_state.is_cancelled,
+        ContractError::AuctionCancelled {}
+    );
+
+    ensure!(
+        token_auction_state.start_time.is_expired(&env.block),
+        ContractError::AuctionNotStarted {}
+    );
+    ensure!(
+        !token_auction_state.end_time.is_expired(&env.block),
+        ContractError::AuctionEnded {}
+    );
+
+    ensure!(
+        token_auction_state.owner != info.sender,
+        ContractError::TokenOwnerCannotBid {}
+    );
+
+    ensure!(
+        info.funds.len() == 1,
+        ContractError::InvalidFunds {
+            msg: "Auctions require exactly one coin to be sent.".to_string(),
+        }
+    );
+
+    ensure!(
+        token_auction_state.high_bidder_addr != info.sender,
+        ContractError::HighestBidderCannotOutBid {}
+    );
+
+    let coin_denom = token_auction_state.coin_denom.clone();
+    let payment: &Coin = &info.funds[0];
+    ensure!(
+        payment.denom == coin_denom && payment.amount > Uint128::zero(),
+        ContractError::InvalidFunds {
+            msg: format!("No {} assets are provided to auction", coin_denom),
+        }
+    );
+    ensure!(
+        token_auction_state.high_bidder_amount < payment.amount,
+        ContractError::BidSmallerThanHighestBid {}
+    );
+
+    let mut messages: Vec<CosmosMsg> = vec![];
+    // Send back previous bid unless there was no previous bid.
+    if token_auction_state.high_bidder_amount > Uint128::zero() {
+        let bank_msg = BankMsg::Send {
+            to_address: token_auction_state.high_bidder_addr.to_string(),
+            amount: coins(
+                token_auction_state.high_bidder_amount.u128(),
+                token_auction_state.coin_denom.clone(),
+            ),
+        };
+        messages.push(CosmosMsg::Bank(bank_msg));
+    }
+
+    token_auction_state.high_bidder_addr = info.sender.clone();
+    token_auction_state.high_bidder_amount = payment.amount;
+
+    let key = token_auction_state.auction_id.u128();
+    TOKEN_AUCTION_STATE.save(deps.storage, key.clone(), &token_auction_state)?;
+    let mut bids_for_auction = BIDS.load(deps.storage, key.clone())?;
+    bids_for_auction.push(Bid {
+        bidder: info.sender.to_string(),
+        amount: payment.amount,
+        timestamp: env.block.time,
+    });
+    BIDS.save(deps.storage, key, &bids_for_auction)?;
+    Ok(Response::new().add_messages(messages).add_attributes(vec![
+        attr("action", "bid"),
+        attr("token_id", token_id),
+        attr("bider", info.sender.to_string()),
+        attr("amount", payment.amount.to_string()),
+    ]))
+}
+
 fn get_and_increment_next_auction_id(
     storage: &mut dyn Storage,
 ) -> Result<Uint128, ContractError> {
     let next_auction_id = NEXT_AUCTION_ID.load(storage)?;
+
     let incremented_next_auction_id = next_auction_id.checked_add(Uint128::from(1u128))?;
     NEXT_AUCTION_ID.save(storage, &incremented_next_auction_id)?;
 
@@ -120,4 +217,20 @@ fn block_to_expiration(block: &BlockInfo, model: Expiration) -> Option<Expiratio
         Expiration::AtHeight(_) => Some(Expiration::AtHeight(block.height)),
         Expiration::Never {} => None,
     }
+}
+
+fn get_token_auction_state(
+    storage: &dyn Storage,
+    token_id: &str,
+    token_address: &str,
+) -> Result<TokenAuctionState, ContractError> {
+    let key = token_id.to_owned() + token_address;
+    let latest_auction_id: Uint128 = match auction_infos().may_load(storage, &key)? {
+        None => return Err(ContractError::AuctionDoesNotExist {}),
+        Some(auction_info) => *auction_info.latest().unwrap(),
+    };
+    let token_auction_state =
+        TOKEN_AUCTION_STATE.load(storage, latest_auction_id.u128())?;
+
+    Ok(token_auction_state)
 }
